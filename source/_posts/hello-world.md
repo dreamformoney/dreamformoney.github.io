@@ -13,10 +13,10 @@ $ hexo new "My New Post"
 
 More info: [Writing](https://hexo.io/docs/writing.html)
 
-### Run server
+### Clean cache
 
 ``` bash
-$ hexo server
+$ hexo clean
 ```
 
 More info: [Server](https://hexo.io/docs/server.html)
