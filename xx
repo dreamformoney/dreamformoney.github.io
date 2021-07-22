@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+  <Code>NoSuchKey</Code>
+  <Message>The specified key does not exist.</Message>
+  <RequestId>60DD85F6998B3E323405E9F9</RequestId>
+  <HostId>appcdn.kugou.com</HostId>
+  <Key>attached/apk/20210531/com.kugou.android.ringtone_535_1919023.apk1</Key>
+</Error>
