@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 5.4.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"example.com","root":"/","scheme":"Gemini","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":false,"show_result":false,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":false,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}}};
+  </script>
+
+  <meta name="description" content="查看Redis 官方文档可以发现文档上推荐集群规模在1000个实例以内，这个时候我们可能就会疑惑为什么redis cluster要限定集群规模呢？ 其实，制约集群的关键因素就是，实例间的通信开销会随着实例规模增加而增大，在集群超过一定规模时（比如800个节点以上），集群吞吐量会不增反降。 Gossip 协议Gossip 协议，顾名思义，就像流言蜚语一样，利用一种随机、带有传染性的方式，将信息传播到">
+<meta property="og:type" content="article">
+<meta property="og:title" content="redis cluster 如果部署1000个实例会发生什么">
+<meta property="og:url" content="http://example.com/2021/07/09/redis-cluster-%E5%A6%82%E6%9E%9C%E9%83%A8%E7%BD%B21000%E4%B8%AA%E5%AE%9E%E4%BE%8B%E4%BC%9A%E5%8F%91%E7%94%9F%E4%BB%80%E4%B9%88/index.html">
+<meta property="og:site_name" content="Dream For Money">
+<meta property="og:description" content="查看Redis 官方文档可以发现文档上推荐集群规模在1000个实例以内，这个时候我们可能就会疑惑为什么redis cluster要限定集群规模呢？ 其实，制约集群的关键因素就是，实例间的通信开销会随着实例规模增加而增大，在集群超过一定规模时（比如800个节点以上），集群吞吐量会不增反降。 Gossip 协议Gossip 协议，顾名思义，就像流言蜚语一样，利用一种随机、带有传染性的方式，将信息传播到">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2021-07-09T07:33:30.000Z">
+<meta property="article:modified_time" content="2023-01-28T09:58:33.934Z">
+<meta property="article:author" content="Momo Jiji">
+<meta property="article:tag" content="redis">
+<meta name="twitter:card" content="summary">
+
+<link rel="canonical" href="http://example.com/2021/07/09/redis-cluster-%E5%A6%82%E6%9E%9C%E9%83%A8%E7%BD%B21000%E4%B8%AA%E5%AE%9E%E4%BE%8B%E4%BC%9A%E5%8F%91%E7%94%9F%E4%BB%80%E4%B9%88/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>redis cluster 如果部署1000个实例会发生什么 | Dream For Money</title>
+  
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">Dream For Money</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+  </ul>
+</nav>
+
+
+
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="http://example.com/2021/07/09/redis-cluster-%E5%A6%82%E6%9E%9C%E9%83%A8%E7%BD%B21000%E4%B8%AA%E5%AE%9E%E4%BE%8B%E4%BC%9A%E5%8F%91%E7%94%9F%E4%BB%80%E4%B9%88/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Momo Jiji">
+      <meta itemprop="description" content="大佬说的对">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Dream For Money">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          redis cluster 如果部署1000个实例会发生什么
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2021-07-09 15:33:30" itemprop="dateCreated datePublished" datetime="2021-07-09T15:33:30+08:00">2021-07-09</time>
+            </span>
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="far fa-calendar-check"></i>
+                </span>
+                <span class="post-meta-item-text">更新于</span>
+                <time title="修改时间：2023-01-28 17:58:33" itemprop="dateModified" datetime="2023-01-28T17:58:33+08:00">2023-01-28</time>
+              </span>
+
+          
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <p>查看Redis <a target="_blank" rel="noopener" href="http://redisdoc.com/topic/cluster-spec.html">官方文档可以发现文档上推荐集群规模在1000个实例以内</a>，这个时候我们可能就会疑惑为什么redis cluster要限定集群规模呢？</p>
+<p>其实，制约集群的关键因素就是，实例间的通信开销会随着实例规模增加而增大，在集群超过一定规模时（比如800个节点以上），集群吞吐量会不增反降。</p>
+<h4 id="Gossip-协议"><a href="#Gossip-协议" class="headerlink" title="Gossip 协议"></a>Gossip 协议</h4><p>Gossip 协议，顾名思义，就像流言蜚语一样，利用一种随机、带有传染性的方式，将信息传播到整个网络中，并在一定时间内，使得系统内的所有节点数据一致。掌握这个协议不仅能很好地理解这种最常用的，实现最终一致性的算法，也能在后续工作中得心应手地实现数据的最终一致性。它的方法论也特别简单：</p>
+<blockquote>
+<p>在一个处于有界网络的集群里，如果每个节点都随机与其他节点交换特定信息，经过足够长的时间后，集群各个节点对该份信息的认知终将收敛到一致。</p>
+</blockquote>
+<p>这里的“特定信息”一般就是指集群状态、各节点的状态以及其他元数据等。Gossip协议是完全符合 BASE 原则，可以用在任何要求最终一致性的领域，比如分布式存储和注册中心。另外，它可以很方便地实现弹性集群，允许节点随时上下线，提供快捷的失败检测和动态负载均衡等</p>
+<h5 id="Gossip-协议在redis-cluster-中的应用"><a href="#Gossip-协议在redis-cluster-中的应用" class="headerlink" title="Gossip 协议在redis cluster 中的应用"></a>Gossip 协议在redis cluster 中的应用</h5><p>Redis Cluster 在运行时，每个实例上都会保存 Slot 和实例的对应关系（也就是 Slot 映射表），以及自身的状态信息。为了让集群中的每个实例都知道其它所有实例的状态信息，实例之间会按照一定的规则进行通信。这个规则就是 Gossip 协议。</p>
+<p>redis cluster 里Gossip 协议的工作原理可以概括成两点:</p>
+<ol>
+<li>每个实例之间会按照一定的频率，从集群中随机挑选一些实例，把 PING 消息发送给挑选出来的实例，用来检测这些实例是否在线，并交换彼此的状态信息。PING消息中封装了发送消息的实例自身的状态信息、部分其它实例的状态信息，以及 Slot 映射表。</li>
+<li>一个实例在接收到 PING 消息后，会给发送 PING 消息的实例，发送一个 PONG 消息。PONG 消息包含的内容和 PING 消息一样。</li>
+</ol>
+<p>下图显示了两个实例间进行 PING、PONG 消息传递的情况。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">sequenceDiagram</span><br><span class="line">A实例-&gt;&gt;B实例: PING消息:A状态信息+部分其他实例信息+Slot映射表</span><br><span class="line">B实例-&gt;&gt;A实例: PONG消息:B状态信息+部分其他实例信息+Slot映射表</span><br></pre></td></tr></table></figure>
+<blockquote>
+<p>Gossip 协议可以保证在一段时间后，集群中的每一个实例都能获得其它所有实例的状态信息。</p>
+</blockquote>
+<p>这样一来，即使有新节点加入、节点故障、Slot变更等事件发生，实例间也可以通过PING、PONG消息的传递，完成集群状态在每个实例上的同步。而制约Gossip协议水平扩展的主要是通信消息大小和通信频率。</p>
+<p>首先，我们来看实例通信的消息大小。</p>
+<h4 id="Gossip-消息大小"><a href="#Gossip-消息大小" class="headerlink" title="Gossip 消息大小"></a>Gossip 消息大小</h4><p>Redis 实例发送的 PING 消息的消息体是由 clusterMsgDataGossip 结构体组成的，这个结构体的定义如下所示：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">typedef struct &#123;</span><br><span class="line">    char nodename[CLUSTER_NAMELEN];  //40字节</span><br><span class="line">    uint32_t ping_sent; //4字节</span><br><span class="line">    uint32_t pong_received; //4字节</span><br><span class="line">    char ip[NET_IP_STR_LEN]; //46字节</span><br><span class="line">    uint16_t port;  //2字节</span><br><span class="line">    uint16_t cport;  //2字节</span><br><span class="line">    uint16_t flags;  //2字节</span><br><span class="line">    uint32_t notused1; //4字节</span><br><span class="line">&#125; clusterMsgDataGossip;</span><br></pre></td></tr></table></figure>
+
+<p>其中，CLUSTER_NAMELEN 和 NET_IP_STR_LEN 的值分别是 40 和 46，分别表示，nodename 和 ip 这两个字节数组的长度是 40 字节和 46 字节，我们再把结构体中其它信息的大小加起来，就可以得到一个 Gossip 消息的大小了，即 104字节。每个实例在发送一个Gossip消息时，除了会传递自身的状态信息，默认还会传递集群十分之一实例的状态信息。所以，对于一个包含了 1000 个实例的集群来说，每个实例发送一个 PING 消息时，会包含 100 个实例的状态信息，总的数据量是 10400 字节，再加上发送实例自身的信息，一个 Gossip 消息大约是 10KB。</p>
+<p>此外，为了让 Slot 映射表能够在不同实例间传播，PING 消息中还带有一个长度为 16,384 bit 的 Bitmap，这个 Bitmap 的每一位对应了一个 Slot，如果某一位为 1，就表示这个 Slot 属于当前实例。这个 Bitmap 大小换算成字节后，是 2KB。我们把实例状态信息和 Slot 分配信息相加，就可以得到一个 PING 消息的大小了，大约是 12KB。</p>
+<blockquote>
+<p>16384 bit的原因：<br>CRC16算法产生的hash值有16位，即该算法可以产生0~2^16(65535)之间的数。<br>但是如果槽位是65536时，消息头的大小达到了8k，发送的心跳包过于庞大.</p>
+</blockquote>
+<p>PONG 消息和 PING消息的内容一样，所以，它的大小大约是12KB。每个实例发送了PING消息后，还会收到返回的PONG消息，两个消息加起来有 24KB。</p>
+<p>虽然从绝对值上来看，24KB并不算很大，但是，如果实例正常处理的单个请求只有几KB的话，那么，实例为了维护集群状态一致传输的 PING/PONG 消息，就要比单个业务请求大了。而且，每个实例都会给其它实例发送 PING/PONG消息。随着集群规模增加，这些心跳消息的数量也会越多，会占据一部分集群的网络通信带宽，进而会降低集群服务正常客户端请求的吞吐量。</p>
+<h4 id="通信频率"><a href="#通信频率" class="headerlink" title="通信频率"></a>通信频率</h4><p>Redis Cluster 的通信频率主要分为两点：</p>
+<ol>
+<li>随机周期性发送PING消息</li>
+</ol>
+<blockquote>
+<p>Redis 实例的 clusterCron 函数会被定时调用（100ms），每被执行10次，就会准备向随机的一个节点发送 PING 消息。它会先随机的选出 5 个节点，然后从中选择最久没有与之通信的节点，调用 clusterSendPing 函数发送类型为 CLUSTERMSG_TYPE_PING 的消息</p>
+</blockquote>
+<p>但是，这里有一个问题：实例选出来的这个最久没有通信的实例，毕竟是从随机选出的 5个实例中挑选的，这并不能保证这个实例就一定是整个集群中最久没有通信的实例。所以，这有可能会出现，有些实例一直没有被发送 PING 消息，导致它们维护的集群状态已经过期了。为了避免这种情况，就有了第二点</p>
+<ol start="2">
+<li>定期检查PONG消息超过cluster-node-timeout/2时间发送PING消息</li>
+</ol>
+<blockquote>
+<p>Redis Cluster 的实例会按照每 100ms 一次的频率，扫描本地的实例列表，如果发现有实例最近一次接收 PONG 消息的时间，已经大于配置项cluster-node-timeout的一半了（cluster-node-timeout/2），就会立刻给该实例发送 PING 消息，更新这个实例上的集群状态信息。</p>
+</blockquote>
+<p>当集群规模扩大之后，因为网络拥塞或是不同服务器间的流量竞争，会导致实例间的网络通信延迟增加。如果有部分实例无法收到其它实例发送的 PONG 消息，就会引起实例之间频繁地发送 PING消息，这又会对集群网络通信带来额外的开销了。</p>
+<p>我们来总结下单实例每秒会发送的 PING 消息数量，如下所示：</p>
+<blockquote>
+<p>PING 消息发送数量 = 1 + 10 * 实例数（最近一次接收 PONG 消息的时间超出 cluster-node-timeout/2）</p>
+</blockquote>
+<p>假设单个实例检测发现，每 100 毫秒有 10 个实例的 PONG 消息接收超时，那么，这个实例每秒就会发送 101 个 PING 消息，约占 1.2MB/s （101*12KB）带宽。这还只是一个实例，对于几百个实例的集群来说，这个网络消耗是不能接受的。</p>
+<h4 id="如何降低实例间的通信开销？"><a href="#如何降低实例间的通信开销？" class="headerlink" title="如何降低实例间的通信开销？"></a>如何降低实例间的通信开销？</h4><p>redis cluster提供了 cluster-node-timeout 这个配置项供我们调整PING消息的发送频率。配置项 cluster-node-timeout 定义了集群实例被判断为故障的心跳超时时间，默认是 15 秒。如果 cluster-node-timeout 值比较小，那么，在大规模集群中，就会比较频繁地出现 PONG 消息接收超时的情况，从而导致实例每秒要执行 10 次给 PONG 消息超时的实例发送 PING 消息 这个操作。所以，为了避免过多的心跳消息挤占集群带宽，我们可以调大 cluster-node-timeout 值，比如说调大到 20 秒或 25秒。这样一来，PONG消息接收超时的情况就会有所缓解，单实例也不用频繁地每秒执行 10 次心跳发送操作了。</p>
+<p>当然，cluster-node-timeout 的值也不能无限调大，否则，如果实例真的发生了故障，我们就需要等待 cluster-node-timeout 时长后，才能检测出这个故障，这又会导致实际的故障恢复时间被延长，会影响到集群服务的正常使用。</p>
+<h4 id="小结"><a href="#小结" class="headerlink" title="小结"></a>小结</h4><p>Redis Cluster 运行时，各实例间需要通过 PING、PONG 消息进行信息交换，这些心跳消息包含了当前实例和部分其它实例的状态信息，以及 Slot 分配信息。这种通信机制有助于 Redis Cluster 中的所有实例都拥有完整的集群状态信息。但是，随着集群规模的增加，实例间的通信量也会增加。如果我们盲目地对 Redis Cluster 进行扩容，就可能会遇到集群性能变慢的情况。这是因为，集群中大规模的实例间心跳消息会挤占集群处理正常请求的带宽。而且，有些实例可能因为网络拥塞导致无法及时收到 PONG 消息，每个实例在运行时会周期性地（每秒 10 次）检测是否有这种情况发生，一旦发生，就会立即给这些 PONG 消息超时的实例发送心跳消息。集群规模越大，网络拥塞的概率就越高，相应的，PONG 消息超时的发生概率就越高，这就会导致集群中有大量的心跳消息，影响集群服务正常请求，。</p>
+<p>所以在实际应用中，如果不是特别需要大容量集群，建议把 Redis Cluster 的规模控制在 400<del>500 个实例。假设单个实例每秒能支撑 8 万请求操作（8 万 QPS），每个主实例配置 1 个从实例，那么，400</del> 500 个实例可支持 1600 万~2000 万 QPS（200/250 个主实例 *8 万 QPS=1600/2000 万 QPS），这个吞吐量性能可以满足不少业务应用的需求。</p>
+<hr>
+<blockquote>
+<p>问题：是否可以把redis cluster的实例状态信息和slot路由信息保存在第三方的存储系统上（如zk等）</p>
+</blockquote>
+<p>由于 Redis Cluster 每个实例需要保存集群完整的路由信息，所以每增加一个实例，都需要多一次与其他实例的通信开销，如果有 N 个实例，集群就要存储 N 份完整的路由信息。而如果把 Slot 信息存储在第三方存储上，那么无论集群实例有多少，这些信息在第三方存储上只会存储一份，也就是说，集群内的通信开销，不会随着实例的增加而增长。当集群需要用到这些信息时，直接从第三方存储上获取即可。</p>
+<p>Redis Cluster 把所有功能都集成在了 Redis 实例上，包括路由表的交换、实例健康检查、故障自动切换等等，这么做的好处是，部署和使用非常简单，只需要部署实例，然后让多个实例组成切片集群即可提供服务。但缺点也很明显，每个实例负责的工作比较重，如果看源码实现，也不太容易理解，而且如果其中一个功能出现 bug，只能升级整个 Redis Server 来解决。</p>
+<p>所以对于元数据的维护，主要分为两种模式：分散式和集中式</p>
+<p>分散式机制将元数据存储在部分或者所有节点上，不同节点之间进行不断的通信来维护元数据的变更和一致性。Redis Cluster，Consul 等都是该模式。</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>集中式</td>
+<td>数据更新及时，时效好，元数据的更新和读取，时效性非常好，一旦元数据出现了变更，立即就更新到集中式的外部节点中，其他节点读取的时候立即就可以感知到;</td>
+<td>较大数据更新压力，更新压力全部集中在外部节点，作为单点影响整个系统</td>
+</tr>
+<tr>
+<td>分散式</td>
+<td>数据更新压力分散，元数据的更新比较分散，不是集中某一个节点，更新请求比较分散，而且有不同节点处理，有一定的延时，降低了并发压力</td>
+<td>数据更新延迟，可能导致集群的感知有一定的滞后</td>
+</tr>
+</tbody></table>
+
+    </div>
+
+    
+    
+    
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/redis/" rel="tag"># redis</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2021/07/09/redis-%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84/" rel="prev" title="redis 数据结构">
+      <i class="fa fa-chevron-left"></i> redis 数据结构
+    </a></div>
+      <div class="post-nav-item">
+    <a href="/2021/07/22/%E5%A4%A7%E4%BD%AC%E4%B8%93%E7%94%A8%E6%8C%87%E5%AF%BC%E6%96%87%E6%A1%A3/" rel="next" title="大佬专用指导文档">
+      大佬专用指导文档 <i class="fa fa-chevron-right"></i>
+    </a></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-4"><a class="nav-link" href="#Gossip-%E5%8D%8F%E8%AE%AE"><span class="nav-number">1.</span> <span class="nav-text">Gossip 协议</span></a><ol class="nav-child"><li class="nav-item nav-level-5"><a class="nav-link" href="#Gossip-%E5%8D%8F%E8%AE%AE%E5%9C%A8redis-cluster-%E4%B8%AD%E7%9A%84%E5%BA%94%E7%94%A8"><span class="nav-number">1.1.</span> <span class="nav-text">Gossip 协议在redis cluster 中的应用</span></a></li></ol></li><li class="nav-item nav-level-4"><a class="nav-link" href="#Gossip-%E6%B6%88%E6%81%AF%E5%A4%A7%E5%B0%8F"><span class="nav-number">2.</span> <span class="nav-text">Gossip 消息大小</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E9%80%9A%E4%BF%A1%E9%A2%91%E7%8E%87"><span class="nav-number">3.</span> <span class="nav-text">通信频率</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E5%A6%82%E4%BD%95%E9%99%8D%E4%BD%8E%E5%AE%9E%E4%BE%8B%E9%97%B4%E7%9A%84%E9%80%9A%E4%BF%A1%E5%BC%80%E9%94%80%EF%BC%9F"><span class="nav-number">4.</span> <span class="nav-text">如何降低实例间的通信开销？</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E5%B0%8F%E7%BB%93"><span class="nav-number">5.</span> <span class="nav-text">小结</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">Momo Jiji</p>
+  <div class="site-description" itemprop="description">大佬说的对</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">5</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+        <span class="site-state-item-count">1</span>
+        <span class="site-state-item-name">分类</span>
+      </div>
+      <div class="site-state-item site-state-tags">
+        <span class="site-state-item-count">1</span>
+        <span class="site-state-item-name">标签</span>
+      </div>
+  </nav>
+</div>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2023</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Momo Jiji</span>
+</div>
+  <div class="powered-by">由 <a href="https://hexo.io/" class="theme-link" rel="noopener" target="_blank">Hexo</a> & <a href="https://theme-next.org/" class="theme-link" rel="noopener" target="_blank">NexT.Gemini</a> 强力驱动
+  </div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+</body>
+</html>
